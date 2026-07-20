@@ -1,0 +1,140 @@
+#include <Arduino.h>
+#include <Pins_Arduino.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+/* OLED is on the internal I²C bus */
+// #define OLED_SDA 17
+// #define OLED_SCL 18
+// #define OLED_RST 21           // must be toggled once
+// Heltec boards provide a Vext pin to switch power to the OLED module.
+// On Heltec variants this is typically GPIO36 (Vext).
+#define VEXT 36
+
+/* 0.49" 64×32 px SSD1306 – I²C addr 0x3C */
+#define SCREEN_WIDTH 64
+#define SCREEN_HEIGHT 32
+// Adafruit_SSD1306 using TwoWire &Wire instance and reset pin
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, RST_OLED);
+
+void setup()
+{
+  pinMode(RST_OLED, OUTPUT);
+  // Enable Vext (OLED power) before toggling reset so the module is powered.
+  // Heltec reference examples use LOW to enable Vext.
+  pinMode(VEXT, OUTPUT);
+  digitalWrite(VEXT, LOW);
+  delay(10);
+  // Toggle reset: LOW -> wait -> HIGH
+  digitalWrite(RST_OLED, LOW);
+  delay(50);
+  digitalWrite(RST_OLED, HIGH);
+
+  Serial.begin(115200);
+  delay(20);
+//   Serial.printf("Starting I2C on SDA=%d SCL=%d RST=%d\n", OLED_SDA, OLED_SCL, OLED_RST);
+
+  // Attempt to initialize I2C on the provided pins. If the bus or device
+  // Probe the usual SSD1306 address first (0x3C). If it responds we'll
+  // Attempt to initialize I2C on the provided pins. If the bus or device
+  // does not respond we avoid calling `display.init()` to prevent null
+  // pointer errors deep inside Wire/SSD1306 code.
+  bool displayConnected = false;
+
+  // Candidate (SDA,SCL) pairs to try, starting with the configured values.
+  const int candidates[][2] = {
+    { SDA_OLED, SCL_OLED },
+    { 8, 9 },    // common S3 devkit I2C pins
+    { 18, 19 },  // common ESP32 alternative I2C pins
+    { 4, 5 },
+    { 2, 3 }
+  };
+
+  const size_t nCandidates = sizeof(candidates) / sizeof(candidates[0]);
+  for (size_t i = 0; i < nCandidates && !displayConnected; ++i) {
+    int sda = candidates[i][0];
+    int scl = candidates[i][1];
+
+    // Skip obviously invalid GPIO numbers for this target
+    if (!GPIO_IS_VALID_GPIO((gpio_num_t)sda) || !GPIO_IS_VALID_GPIO((gpio_num_t)scl)) {
+      Serial.printf("Skipping invalid GPIO pair SDA=%d SCL=%d\n", sda, scl);
+      continue;
+    }
+
+    Serial.printf("Trying I2C on SDA=%d SCL=%d\n", sda, scl);
+    Wire.end();
+    // Wire.setClock(100000); // 100 kHz
+    delay(10);
+    Wire.begin(sda, scl);
+
+    // Probe the usual SSD1306 address first (0x3C).
+    const uint8_t probeAddr = 0x3C;
+    Wire.beginTransmission(probeAddr);
+    uint8_t probeErr = Wire.endTransmission();
+    if (probeErr == 0) {
+      Serial.printf("I2C device found at 0x%02X on SDA=%d SCL=%d\n", probeAddr, sda, scl);
+      displayConnected = true;
+      break;
+    } else {
+      Serial.printf("No device at 0x%02X on SDA=%d SCL=%d (err=%u)\n", probeAddr, sda, scl, probeErr);
+    }
+  }
+
+  // If nothing matched, leave Wire in a known state and optionally do a
+  // comprehensive scan for diagnostics.
+  if (!displayConnected) {
+    Serial.println("No SSD1306 found on candidate pins. Performing full I2C scan for diagnostics:");
+    Wire.end();
+    delay(10);
+    Wire.begin(); // default pins
+    for (uint8_t addr = 1; addr < 127; ++addr) {
+      Wire.beginTransmission(addr);
+      uint8_t err = Wire.endTransmission();
+      if (err == 0) {
+        Serial.printf(" Found device at 0x%02X\n", addr);
+      }
+    }
+  }
+  // At this point the candidate loop already probed for the SSD1306. If
+  // `displayConnected` is true we already toggled reset above and can
+  // initialize the display. Otherwise we skip init (diagnostics were
+  // already printed by the candidate scan).
+
+  if (displayConnected) {
+    // Initialize Adafruit driver over I2C. Try using SSD1306_SWITCHCAPVCC
+    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+      Serial.println("Adafruit SSD1306 allocation failed — skipping display operations.");
+    } else {
+      // Ensure visible settings for diagnostic purposes
+      display.clearDisplay();
+      display.setTextSize(1);
+      display.setTextColor(SSD1306_WHITE);
+    //   display.drawRect(0, 0, display.width() - 1, display.height() - 1, SSD1306_WHITE);
+      display.setCursor(0, 0);
+      display.print("Hello World");
+      display.display();             // push to screen
+      Serial.println("Adafruit display initialized and test pattern drawn.");
+    }
+  }
+}
+
+void loop()
+{
+    // nothing to do
+    Serial.printf(" Found device\n");
+    delay(10000);
+
+}
+
+// function decodeUplink(input) {
+//   var temp = (input.bytes[0] << 8) | input.bytes[1];
+//   var hum  = (input.bytes[2] << 8) | input.bytes[3];
+
+//   return {
+//     data: {
+//       temperature: temp / 100,
+//       humidity: hum / 10
+//     }
+//   };
+// }
